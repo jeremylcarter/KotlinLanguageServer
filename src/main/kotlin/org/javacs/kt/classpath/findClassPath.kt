@@ -1,33 +1,33 @@
 package org.javacs.kt.classpath
 
-import java.util.logging.Level
 import org.javacs.kt.LOG
-import org.javacs.kt.util.winCompatiblePathOf
-import org.javacs.kt.util.tryResolving
-import org.javacs.kt.util.firstNonNull
 import org.javacs.kt.util.KotlinLSException
-import org.jetbrains.kotlin.utils.ifEmpty
+import org.javacs.kt.util.firstNonNull
+import org.javacs.kt.util.tryResolving
 import java.io.File
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.attribute.BasicFileAttributes
-import java.util.stream.Collectors
 import java.util.function.BiPredicate
-import java.util.Comparator
-import java.util.concurrent.TimeUnit
+import java.util.stream.Collectors
 
 fun findClassPath(workspaceRoots: Collection<Path>): Set<Path> {
-    return workspaceRoots
+    return ensureStdLibInPaths(workspaceRoots
             .flatMap { projectFiles(it) }
             .flatMap { readProjectFile(it) }
-            .toSet()
-            .ifEmpty { backupClassPath() }
+            .union(workspaceRoots.flatMap { readLibDirectory(it) }))
+}
+
+private fun ensureStdLibInPaths(paths: Collection<Path>): Set<Path> {
+    return when (paths.any { it.toString().contains("kotlin-stdlib") }) {
+        true -> paths.toSet()
+        false -> paths.toSet().union(backupClassPath())
+    }
 }
 
 private fun backupClassPath() =
-    listOfNotNull(findKotlinStdlib()).toSet()
+        listOfNotNull(findKotlinStdlib()).toSet()
 
 private fun projectFiles(workspaceRoot: Path): Set<Path> {
     return Files.walk(workspaceRoot)
@@ -47,13 +47,22 @@ private fun readProjectFile(file: Path): Set<Path> {
     }
 }
 
+private fun readLibDirectory(workspaceRoot: Path): Set<Path> {
+    var libsDirectory = workspaceRoot.resolve("libs").toFile()
+    if (libsDirectory.exists() && libsDirectory.isDirectory) {
+        return libsDirectory.listFiles { _, name -> name.endsWith("jar") }.map { it.toPath() }.toSet()
+    }
+    return emptySet()
+}
+
 private fun isMavenBuildFile(file: Path) = file.endsWith("pom.xml")
 
 private fun isGradleBuildFile(file: Path) = file.endsWith("build.gradle") || file.endsWith("build.gradle.kts")
 
 private fun readPom(pom: Path): Set<Path> {
     val mavenOutput = generateMavenDependencyList(pom)
-    val artifacts = mavenOutput?.let(::readMavenDependencyList) ?: throw KotlinLSException("No artifacts could be read from $pom")
+    val artifacts = mavenOutput?.let(::readMavenDependencyList)
+            ?: throw KotlinLSException("No artifacts could be read from $pom")
 
     when {
         artifacts.isEmpty() -> LOG.warning("No artifacts found in $pom")
@@ -148,8 +157,8 @@ private fun tryFindingLocalArtifactUsing(group: String, artifact: String, artifa
             .orElse(null)
             ?.let {
                 Files.find(artifactDirResolution.artifactDir, 3, isCorrectArtifact)
-                    .findFirst()
-                    .orElse(null)
+                        .findFirst()
+                        .orElse(null)
             }
 }
 
@@ -158,15 +167,15 @@ private fun Path.existsOrNull() =
 
 private fun findLocalArtifactDirUsingMaven(group: String, artifact: String) =
         LocalArtifactDirectoryResolution(mavenHome.resolve("repository")
-            ?.resolve(group.replace('.', File.separatorChar))
-            ?.resolve(artifact)
-            ?.existsOrNull(), "Maven")
+                ?.resolve(group.replace('.', File.separatorChar))
+                ?.resolve(artifact)
+                ?.existsOrNull(), "Maven")
 
 private fun findLocalArtifactDirUsingGradle(group: String, artifact: String) =
         LocalArtifactDirectoryResolution(gradleCaches
-            ?.resolve(group)
-            ?.resolve(artifact)
-            ?.existsOrNull(), "Gradle")
+                ?.resolve(group)
+                ?.resolve(artifact)
+                ?.existsOrNull(), "Gradle")
 
 private fun compareVersions(left: Path, right: Path): Int {
     val leftVersion = extractVersion(left)
@@ -225,8 +234,8 @@ fun findCommandOnPath(name: String): Path? =
 
 private fun windowsCommand(name: String) =
         findExecutableOnPath("$name.cmd")
-        ?: findExecutableOnPath("$name.bat")
-        ?: findExecutableOnPath("$name.exe")
+                ?: findExecutableOnPath("$name.bat")
+                ?: findExecutableOnPath("$name.exe")
 
 private fun unixCommand(name: String) = findExecutableOnPath(name)
 
